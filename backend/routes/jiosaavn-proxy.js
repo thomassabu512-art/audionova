@@ -351,11 +351,19 @@ router.get('/stream', async (req, res) => {
 // ─── Compilation detection ────────────────────────────────────────────────────
 const COMPILATION_KEYWORDS = [
   'best of', 'top songs', 'top hits', 'collection', 'greatest hits',
-  'hits of', 'playlist', 'mixtape',
+  'hits of', 'playlist', 'mixtape', 'mashup', 'rewind', 'unplugged'
 ];
-function isCompilation(title = '') {
-  const t = title.toLowerCase();
-  return COMPILATION_KEYWORDS.some(kw => t.includes(kw));
+function isCompilation(title, subtitle) {
+  const t = (title || '').toString().toLowerCase();
+  const s = (subtitle || '').toString().toLowerCase();
+  
+  if (COMPILATION_KEYWORDS.some(kw => t.includes(kw))) return true;
+  if (s.includes('various artists')) return true;
+  if (/\b(valentine|diwali|pongal|new year|christmas|eid)\s+special\b/i.test(t)) return true;
+  if (/\b(patriotic|devotional)\s+songs\b/i.test(t)) return true;
+  if (/\b(vibes)\s+\d{4}\b/i.test(t)) return true;
+  
+  return false;
 }
 
 /**
@@ -381,7 +389,7 @@ async function getFreshSongsByLanguage(language, maxAlbums = 10) {
   });
 
   const albums = (albumRes.data.results || []).filter(a => {
-    if (isCompilation(a.title)) return false;
+    if (isCompilation(a.title, a.subtitle)) return false;
     const y = parseInt(a.year || '0', 10);
     return y === year || y === prevYear || !a.year; // include undated too
   }).slice(0, maxAlbums);

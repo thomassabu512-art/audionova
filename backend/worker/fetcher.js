@@ -5,6 +5,15 @@ const cron = require('node-cron');
 const crypto = require('crypto');
 require('dotenv').config();
 
+// ── YouTube Discovery Refresh (optional — does not affect existing fetcher if missing) ──
+let youtubeDiscoveryRefresh = null;
+try {
+  youtubeDiscoveryRefresh = require('../services/youtubeDiscoveryRefresh');
+  console.log('[Fetcher] YouTube discovery refresh module loaded');
+} catch (e) {
+  console.warn('[Fetcher] YouTube discovery refresh module not found (non-fatal):', e.message);
+}
+
 // Database connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/vibemusic',
@@ -360,6 +369,54 @@ cron.schedule('*/10 * * * *', fetchAndProcessReleases);
 
 // Also run immediately on startup
 fetchAndProcessReleases();
+
+// ── YouTube Discovery Refresh Cron (every 6 hours) ────────────────────────────
+//
+// IMPORTANT:
+//  - This is completely separate from the 10-minute JioSaavn cron above.
+//  - Only runs if YOUTUBE_DISCOVERY_ENABLED=true AND YOUTUBE_API_KEY is set.
+//  - The existing JioSaavn Home system is unaffected regardless of this job's status.
+//  - runDiscoveryRefresh() has its own internal lock, TTL check, and feature flag.
+
+if (youtubeDiscoveryRefresh) {
+  // Schedule: every 6 hours (configurable via DISCOVERY_REFRESH_INTERVAL_HOURS)
+  cron.schedule('0 */6 * * *', async () => {
+    console.log('[Fetcher] YouTube discovery cron triggered');
+    try {
+      const result = await youtubeDiscoveryRefresh.runDiscoveryRefresh({ force: false });
+      if (result.skipped) {
+        console.log(`[Fetcher] YouTube discovery skipped: ${result.reason}`);
+      } else if (result.success) {
+        console.log(`[Fetcher] YouTube discovery completed in ${result.durationMs}ms`);
+      } else {
+        console.error('[Fetcher] YouTube discovery failed:', result.error);
+      }
+    } catch (err) {
+      console.error('[Fetcher] YouTube discovery cron error:', err.message);
+    }
+  });
+
+  // Startup run: delay 90 seconds to let MongoDB connect and server fully boot
+  setTimeout(async () => {
+    console.log('[Fetcher] Running YouTube discovery startup refresh...');
+    try {
+      const result = await youtubeDiscoveryRefresh.runDiscoveryRefresh({ force: false });
+      if (result.skipped) {
+        console.log(`[Fetcher] Startup YouTube discovery skipped: ${result.reason}`);
+      } else if (result.success) {
+        console.log(`[Fetcher] Startup YouTube discovery done in ${result.durationMs}ms`);
+      } else {
+        console.error('[Fetcher] Startup YouTube discovery failed:', result.error);
+      }
+    } catch (err) {
+      console.error('[Fetcher] Startup YouTube discovery error:', err.message);
+    }
+  }, 90 * 1000); // 90 second delay
+
+  console.log('[Fetcher] YouTube discovery cron registered (every 6 hours, startup in 90s)');
+} else {
+  console.log('[Fetcher] YouTube discovery cron NOT registered (module not loaded)');
+}
 
 module.exports = {
   fetchAndProcessReleases,

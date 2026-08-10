@@ -336,6 +336,23 @@ class JioSaavnAPI {
       return [];
     }
   }
+
+  // --- Phase 2B: Enhanced Discovery API ---
+  async getEnhancedTrending(limit: number = 30, lang: string = 'trending'): Promise<Song[]> {
+    try {
+      // Use the root API URL without the /api/jiosaavn suffix
+      const rootUrl = API_BASE_URL.replace('/api/jiosaavn', '');
+      const response = await apiClient.get(`${rootUrl}/api/home/trending-enhanced`, {
+        params: { limit, lang }
+      });
+      // The enhanced endpoint returns { success: true, songs: [...] }
+      const songs = response.data?.songs || [];
+      return Array.isArray(songs) ? songs : [];
+    } catch (error) {
+      console.error('Error getting enhanced trending songs:', error);
+      return [];
+    }
+  }
 }
 
 export const jiosaavnApi = new JioSaavnAPI();

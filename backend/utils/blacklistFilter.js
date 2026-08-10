@@ -29,6 +29,9 @@ const EXACT_WORD_TERMS = new Set([
   'lofi',
   'tribute',
   'nightstep',
+  // Added for YouTube discovery: unambiguous alternate-version markers
+  '8d',       // "Song Name 8D" — always 8D audio, never a legitimate song title word
+  'slowed',   // "Song Name Slowed" — always the slowed version, not a real release
 ]);
 
 // ─── Exact phrases ────────────────────────────────────────────────────────────

@@ -585,6 +585,7 @@ async function retryUnmatched(importId, unmatchedItems) {
 module.exports = {
   importPlaylist,
   retryUnmatched,
+  processWithConcurrency,
   cleanTitle,
   extractArtist,
   extractAlbumHint,

@@ -165,6 +165,12 @@ try {
   console.log('✅ Route loaded: /api/youtube-import');
 } catch (e) { console.error('❌ Failed to load youtube-import route:', e.message); }
 
+try {
+  const homeEnhancedRouter = require('./routes/home-enhanced');
+  app.use('/api/home', homeEnhancedRouter);
+  console.log('✅ Route loaded: /api/home (YouTube discovery enhancement)');
+} catch (e) { console.error('❌ Failed to load home-enhanced route:', e.message); }
+
 // Function to get Spotify access token
 async function getSpotifyAccessToken() {
   // Check if Spotify credentials are configured

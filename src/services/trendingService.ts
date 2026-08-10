@@ -99,8 +99,8 @@ class TrendingService {
     languages?: string[]
   ): Promise<TrendingSong[]> {
     try {
-      // Fetch from all language endpoints with better error handling
-      const [mal, ta, hi, en] = await Promise.all([
+      // Fetch from all language endpoints + YouTube Discovery
+      const [mal, ta, hi, en, ytRaw] = await Promise.all([
         jiosaavnApi.getTrendingSongs().catch((err) => {
           console.warn('[TrendingService] Malayalam fetch failed:', err?.message);
           return [];
@@ -115,6 +115,10 @@ class TrendingService {
         }),
         jiosaavnApi.getEnglishNewReleases().catch((err) => {
           console.warn('[TrendingService] English fetch failed:', err?.message);
+          return [];
+        }),
+        jiosaavnApi.getEnhancedTrending(50).catch((err) => {
+          console.warn('[TrendingService] YouTube enhanced fetch failed:', err?.message);
           return [];
         }),
       ]);
@@ -142,11 +146,61 @@ class TrendingService {
         .sort(() => Math.random() - 0.5);
 
       // Balance languages - take equal amounts from each language
-      // For 3 main languages (Malayalam, Tamil, Hindi) - skip English for now
-      const songsPerLanguage = Math.ceil(limit / 3); // Divide equally among 3 languages
-      const balancedMal = shuffleMal.slice(0, songsPerLanguage);
-      const balancedTa = shuffleTa.slice(0, songsPerLanguage);
-      const balancedHi = shuffleHi.slice(0, songsPerLanguage);
+      const songsPerLanguage = Math.ceil(limit / 3);
+      let balancedMal = shuffleMal.slice(0, songsPerLanguage);
+      let balancedTa = shuffleTa.slice(0, songsPerLanguage);
+      let balancedHi = shuffleHi.slice(0, songsPerLanguage);
+
+      // --- PHASE 2C: YOUTUBE DISCOVERY MERGE ---
+      const allJsSongs = [...mal, ...ta, ...hi, ...en];
+      const jsSongIds = new Set(allJsSongs.map(s => s.id));
+      
+      const ytOnly: any[] = [];
+      const ytBothMap = new Map<string, number>();
+
+      (ytRaw || []).forEach((ytSong: any) => {
+        if (jsSongIds.has(ytSong.id)) {
+          // Exists in both: store the boost for canonical JioSaavn object
+          const boost = (ytSong._discoveryScore || 0.5) * 2;
+          ytBothMap.set(ytSong.id, boost);
+        } else {
+          // YouTube only
+          ytSong._isYtOnly = true;
+          ytOnly.push(ytSong);
+        }
+      });
+
+      // Max YT-only allowed (30%)
+      const maxYtOnly = Math.floor(limit * 0.30);
+      const selectedYtOnly = ytOnly
+        .sort((a, b) => (b._discoveryScore || 0) - (a._discoveryScore || 0))
+        .slice(0, maxYtOnly);
+
+      const ytGroups = { malayalam: [] as any[], tamil: [] as any[], hindi: [] as any[] };
+      selectedYtOnly.forEach(song => {
+        const lang = (song.language || '').toLowerCase();
+        if (lang.includes('malayalam')) {
+          song.language = 'malayalam';
+          ytGroups.malayalam.push(song);
+        } else if (lang.includes('tamil')) {
+          song.language = 'tamil';
+          ytGroups.tamil.push(song);
+        } else {
+          song.language = 'hindi'; // Force to match downstream grouper
+          ytGroups.hindi.push(song);
+        }
+      });
+
+      // Merge YT-only into JS language buckets (preserving language balance and limit)
+      const mergeYt = (jsList: any[], ytList: any[]) => {
+        if (ytList.length === 0) return jsList;
+        const keepCount = Math.max(0, jsList.length - ytList.length);
+        return [...ytList, ...jsList.slice(0, keepCount)];
+      };
+
+      balancedMal = mergeYt(balancedMal, ytGroups.malayalam);
+      balancedTa = mergeYt(balancedTa, ytGroups.tamil);
+      balancedHi = mergeYt(balancedHi, ytGroups.hindi);
 
       // Combine balanced selections and deduplicate
       const combined = [...balancedMal, ...balancedTa, ...balancedHi];
@@ -159,6 +213,9 @@ class TrendingService {
       const twoYearsAgo = currentYear - 2;
 
       unique = unique.filter(song => {
+        // BYPASS filters for YouTube discovered songs (Phase 2A already validated them)
+        if ((song as any)._isYtOnly) return true;
+
         // Exclude religious, devotional, or caste songs
         if (isDevotionalOrReligious(song)) return false;
 
@@ -215,6 +272,22 @@ class TrendingService {
       // Compute scores and enrich with metadata
       const scoringYear = new Date().getFullYear();
       const scored: TrendingSong[] = unique.map(song => {
+        if ((song as any)._isYtOnly) {
+          // YT-Only scoring
+          // Map _discoveryScore (0.0 - 1.0) to JioSaavn trend scale (approx 0 - 20)
+          const ytScoreMultiplier = 16;
+          const finalScore = ((song as any)._discoveryScore || 0.5) * ytScoreMultiplier;
+          return {
+            ...song,
+            score: finalScore,
+            rank: 0,
+            delta: 0,
+            velocity: 1.0, // Assign positive velocity for UI rising effect
+            badges: determineBadges(song, finalScore, 1.0, this.config),
+            lastUpdated: Date.now(),
+          };
+        }
+
         const history = this.getHistory(song.id);
         const { score, velocity } = computeTrendScore(song, history, this.config);
         const badges = determineBadges(song, score, velocity, this.config);
@@ -233,6 +306,11 @@ class TrendingService {
             // 10% boost for last year songs
             finalScore *= 1.1;
           }
+        }
+
+        // Apply BOTH boost if applicable (found on JS and YT)
+        if (ytBothMap.has(song.id)) {
+          finalScore += ytBothMap.get(song.id)!;
         }
 
         return {

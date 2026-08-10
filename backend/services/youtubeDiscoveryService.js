@@ -46,6 +46,7 @@ const REGIONAL_QUERIES = [
   { lang: 'malayalam', query: 'new malayalam movie songs 2026 2025', section: 'malayalam' },
   { lang: 'tamil',     query: 'new tamil movie songs 2026 2025',     section: 'tamil'     },
   { lang: 'hindi',     query: 'new hindi bollywood songs 2026 2025', section: 'hindi'     },
+  { lang: 'any',       query: 'latest hit new songs 2026',           section: 'new_releases'},
 ];
 
 // ─── Parse ISO 8601 duration to seconds (e.g. PT3M45S → 225) ─────────────────
@@ -225,15 +226,16 @@ async function searchMusicVideos(apiKey, query, section) {
  *   malayalam: Array,
  *   tamil: Array,
  *   hindi: Array,
+ *   new_releases: Array,
  * }>}
  */
 async function fetchAllDiscoveryCandidates(apiKey) {
   if (!apiKey) {
     console.warn('[YTDiscovery] YOUTUBE_API_KEY is not set — skipping discovery fetch');
-    return { trending: [], malayalam: [], tamil: [], hindi: [] };
+    return { trending: [], malayalam: [], tamil: [], hindi: [], new_releases: [] };
   }
 
-  const result = { trending: [], malayalam: [], tamil: [], hindi: [] };
+  const result = { trending: [], malayalam: [], tamil: [], hindi: [], new_releases: [] };
 
   // ── Trending: India + global (cheap — 1 quota unit each) ─────────────────
   const [indiaTrending, globalTrending] = await Promise.all([

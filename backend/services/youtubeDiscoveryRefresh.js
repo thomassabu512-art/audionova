@@ -141,7 +141,7 @@ async function runDiscoveryRefresh(options) {
     const ytCandidates = await fetchAllDiscoveryCandidates(YOUTUBE_API_KEY);
 
     // Section types we process in this refresh
-    const sections = ['trending', 'malayalam', 'tamil', 'hindi'];
+    const sections = ['trending', 'malayalam', 'tamil', 'hindi', 'new_releases'];
     const sectionResults = {};
 
     for (const section of sections) {

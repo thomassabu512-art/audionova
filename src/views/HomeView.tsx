@@ -14,6 +14,7 @@ import { useSettings } from '@/context/SettingsContext';
 import type { Song, Album } from '@/services/jiosaavnApi';
 import { jiosaavnApi } from '@/services/jiosaavnApi';
 import { trendingService } from '@/services/trendingService';
+import { homeEnhancedService } from '@/services/homeEnhancedService';
 import { getHighestQualityImage as getHighestQualityImageUtil, getImageUrlWithFallback } from '@/utils/imageUtils';
 import { useNavigate } from 'react-router-dom';
 import PlaylistSidebar from '@/components/PlaylistSidebar';
@@ -298,12 +299,7 @@ const HomeView: React.FC = () => {
   const fetchNewReleasesData = useCallback(async () => {
     setIsNewReleasesLoading(true);
     try {
-      const [mal, ta, hi] = await Promise.all([
-        jiosaavnApi.getTrendingSongs?.() ?? [],
-        jiosaavnApi.getTamilTrendingSongs?.() ?? [],
-        jiosaavnApi.getHindiTrendingSongs?.() ?? []
-      ]);
-      const combined = [...mal, ...ta, ...hi];
+      const combined = await homeEnhancedService.getEnhancedSection('new_releases', 50) as any[];
 
       // Remove duplicates using enhanced deduplication
       const unique = dedupeSongs(combined);
@@ -433,11 +429,7 @@ const HomeView: React.FC = () => {
   const fetchMalayalamSongsData = useCallback(async () => {
     setIsMalayalamLoading(true);
     try {
-      const [trending, romance] = await Promise.all([
-        jiosaavnApi.getTrendingSongs?.() ?? [],
-        jiosaavnApi.getMalayalamRomanceSongs?.() ?? []
-      ]);
-      const combined = dedupeSongs([...trending, ...romance]);
+      const combined = await homeEnhancedService.getEnhancedSection('malayalam', 50) as any[];
 
       // Normalize images for all songs
       const normalized = combined.map(s => ({
@@ -478,7 +470,7 @@ const HomeView: React.FC = () => {
     setIsTamilLoading(true);
     try {
       // OPTIMIZED: Fetch only Tamil trending songs for faster loading
-      const trending = await jiosaavnApi.getTamilTrendingSongs?.() ?? [];
+      const trending = await homeEnhancedService.getEnhancedSection('tamil', 50) as any[];
 
       // Normalize images for all songs (keep image array intact)
       const normalized = trending.map(s => ({

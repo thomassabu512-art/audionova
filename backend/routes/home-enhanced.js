@@ -60,22 +60,30 @@ function isMongAvailable() {
 }
 
 /**
- * Fetch songs from the existing /api/trending endpoint as a fallback.
+ * Fetch songs from the appropriate JioSaavn endpoint as a fallback.
  * If that fails, returns an empty array.
- *
- * The existing trending route is NOT modified — we just HTTP-call it.
  */
-async function fetchJioSaavnTrendingFallback(limit) {
+async function fetchJioSaavnFallback(sectionType, limit) {
+  let url = `http://127.0.0.1:${process.env.PORT || 5009}`;
+  if (sectionType === 'trending' || sectionType === 'english') {
+    url += '/api/trending';
+  } else if (sectionType === 'new_releases') {
+    url += '/api/jiosaavn/fresh-songs/malayalam'; // Just a default fallback if generic new releases
+  } else {
+    url += `/api/jiosaavn/fresh-songs/${sectionType}`;
+  }
+
   try {
-    const resp = await axios.get(JIOSAAVN_TRENDING_URL, {
+    const resp = await axios.get(url, {
       params: { limit: limit || MAX_TRENDING_SONGS },
       timeout: 15000,
     });
     // /api/trending returns { songs: [...] }
-    const songs = (resp.data && resp.data.songs) || (Array.isArray(resp.data) ? resp.data : []);
+    // /api/jiosaavn/fresh-songs returns { data: [...] }
+    const songs = (resp.data && resp.data.songs) || (resp.data && resp.data.data) || (Array.isArray(resp.data) ? resp.data : []);
     return songs;
   } catch (err) {
-    console.warn(`[HomeEnhanced] Fallback to /api/trending failed: ${err.message}`);
+    console.warn(`[HomeEnhanced] Fallback to ${url} failed: ${err.message}`);
     return [];
   }
 }
@@ -120,33 +128,31 @@ function toFrontendSong(ds, backendOrigin) {
   };
 }
 
-// ─── GET /api/home/trending-enhanced ─────────────────────────────────────────
+// ─── GET /api/home/enhanced/:sectionType ─────────────────────────────────────
 
 /**
- * Returns YouTube-enhanced trending songs.
+ * Returns YouTube-enhanced songs for any valid section.
  *
  * Data is served from the MongoDB discovery cache.
- * If the cache is unavailable, stale, or empty, falls back to /api/trending.
+ * If the cache is unavailable, stale, or empty, falls back to the appropriate JioSaavn API.
  *
  * Query params:
  *   limit  {number}  Max songs to return (default: 30)
- *   lang   {string}  Optional language filter: 'malayalam', 'tamil', 'hindi'
- *                    If omitted, returns 'trending' section.
  */
-router.get('/trending-enhanced', async (req, res) => {
+router.get('/enhanced/:sectionType', async (req, res) => {
   const limit  = Math.min(parseInt(req.query.limit || String(MAX_TRENDING_SONGS), 10), 50);
-  const lang   = req.query.lang || 'trending';
+  const rawLang = req.params.sectionType;
 
-  // Map lang param to our section types
+  // Map param to our section types
   const VALID_SECTIONS = ['trending', 'malayalam', 'tamil', 'hindi', 'new_releases', 'english'];
-  const sectionType = VALID_SECTIONS.includes(lang) ? lang : 'trending';
+  const sectionType = VALID_SECTIONS.includes(rawLang) ? rawLang : 'trending';
 
   // ── Check if discovery is enabled and MongoDB is available ────────────────
   const canUseDiscovery = DISCOVERY_ENABLED && YoutubeDiscoveryCache && isMongAvailable();
 
   if (!canUseDiscovery) {
     // Feature disabled or MongoDB down — transparent fallback
-    const songs = await fetchJioSaavnTrendingFallback(limit);
+    const songs = await fetchJioSaavnFallback(sectionType, limit);
     return res.json({
       success:    true,
       source:     'jiosaavn_fallback',
@@ -206,7 +212,7 @@ router.get('/trending-enhanced', async (req, res) => {
     });
   }
 
-  const fallbackSongs = await fetchJioSaavnTrendingFallback(limit);
+  const fallbackSongs = await fetchJioSaavnFallback(sectionType, limit);
   return res.json({
     success:    true,
     source:     'jiosaavn_fallback',
@@ -215,6 +221,14 @@ router.get('/trending-enhanced', async (req, res) => {
     songs:      fallbackSongs.slice(0, limit),
     count:      Math.min(fallbackSongs.length, limit),
   });
+});
+
+// Backward compatibility alias for the old route
+router.get('/trending-enhanced', async (req, res) => {
+  req.params.sectionType = req.query.lang || 'trending';
+  // Forward to the new handler logic by rewriting the URL and invoking the router again,
+  // but simpler: just redirect.
+  res.redirect(`/api/home/enhanced/${req.params.sectionType}?limit=${req.query.limit || 30}`);
 });
 
 // ─── GET /api/home/status ─────────────────────────────────────────────────────

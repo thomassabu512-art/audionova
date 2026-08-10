@@ -16,8 +16,8 @@ import {
 import { isLikelyWrongImage, normalizeSongImage } from '@/utils/songImage';
 import { metadataResolver } from './metadataResolver';
 
-const CACHE_KEY = 'trending_songs_v2';
-const HISTORY_KEY = 'trending_history_v2';
+const CACHE_KEY = 'trending_songs_v3';
+const HISTORY_KEY = 'trending_history_v3';
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 const HISTORY_RETENTION = 72 * 60 * 60 * 1000; // 72 hours
 

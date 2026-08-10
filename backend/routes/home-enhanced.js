@@ -87,7 +87,17 @@ async function fetchJioSaavnTrendingFallback(limit) {
  * This ensures HomeView.tsx and TrendingSongsSection can consume the
  * enhanced endpoint without any frontend changes.
  */
-function toFrontendSong(ds) {
+function toFrontendSong(ds, backendOrigin) {
+  const rewriteUrl = (arr) => {
+    if (!arr || !Array.isArray(arr)) return arr;
+    return arr.map(item => {
+      if (item.link && item.link.startsWith('/api/')) {
+        return { ...item, link: backendOrigin + item.link };
+      }
+      return item;
+    });
+  };
+
   return {
     id:             ds.jiosaavnId,
     name:           ds.name,
@@ -99,8 +109,8 @@ function toFrontendSong(ds) {
     language:       ds.language || '',
     playCount:      ds.playCount || 0,
     hasLyrics:      ds.hasLyrics || false,
-    image:          ds.image || [],
-    downloadUrl:    ds.downloadUrl || [],
+    image:          rewriteUrl(ds.image) || [],
+    downloadUrl:    rewriteUrl(ds.downloadUrl) || [],
     url:            ds.url || '',
     explicitContent: ds.explicitContent || false,
     // Discovery-specific fields (frontend ignores these but useful for debug)
@@ -163,10 +173,12 @@ router.get('/trending-enhanced', async (req, res) => {
     && cacheAge < CACHE_TTL_MS;
 
   if (isCacheValid) {
+    const backendOrigin = process.env.BACKEND_PUBLIC_URL || (req.protocol + '://' + req.get('host'));
+
     // ── Serve from cache ────────────────────────────────────────────────────
     const songs = cacheDoc.songs
       .slice(0, limit)
-      .map(toFrontendSong);
+      .map(s => toFrontendSong(s, backendOrigin));
 
     return res.json({
       success:          true,

@@ -13,6 +13,7 @@ import { useMusic } from '@/context/MusicContext';
 import { useSettings } from '@/context/SettingsContext';
 import type { Song, Album } from '@/services/jiosaavnApi';
 import { jiosaavnApi } from '@/services/jiosaavnApi';
+import { trendingService } from '@/services/trendingService';
 import { getHighestQualityImage as getHighestQualityImageUtil, getImageUrlWithFallback } from '@/utils/imageUtils';
 import { useNavigate } from 'react-router-dom';
 import PlaylistSidebar from '@/components/PlaylistSidebar';
@@ -297,13 +298,15 @@ const HomeView: React.FC = () => {
   const fetchNewReleasesData = useCallback(async () => {
     setIsNewReleasesLoading(true);
     try {
-      // OPTIMIZED: Fetch only Malayalam trending first (fastest)
-      const mal = await jiosaavnApi.getTrendingSongs?.() ?? [];
-      
-      // Removed verbose logging for cleaner console
+      const [mal, ta, hi] = await Promise.all([
+        jiosaavnApi.getTrendingSongs?.() ?? [],
+        jiosaavnApi.getTamilTrendingSongs?.() ?? [],
+        jiosaavnApi.getHindiTrendingSongs?.() ?? []
+      ]);
+      const combined = [...mal, ...ta, ...hi];
 
       // Remove duplicates using enhanced deduplication
-      const unique = dedupeSongs(mal);
+      const unique = dedupeSongs(combined);
 
       // Normalize images for all songs
       const normalized = unique.map(s => ({
@@ -312,7 +315,7 @@ const HomeView: React.FC = () => {
       }));
 
       // Filter out English songs and short songs
-      const newReleasesCandidates = normalized.filter(s => {
+      const newReleasesCandidates = normalized.filter((s: any) => {
         const isNotEnglish = getLangCode(s.language) !== 'EN';
         const duration = Number(s.duration) || 0;
         const isFullLength = duration >= 90;
@@ -344,11 +347,11 @@ const HomeView: React.FC = () => {
   const fetchTrendingSongsData = useCallback(async () => {
     setIsTrendingLoading(true);
     try {
-      // OPTIMIZED: Fetch only Malayalam trending for faster loading
-      const mal = await jiosaavnApi.getTrendingSongs?.() ?? [];
+      // Fetch enhanced trending data via trendingService
+      const mal = await trendingService.getTrendingSongs({ limit: 30 }) ?? [];
 
       // Remove duplicates using enhanced deduplication
-      const unique = dedupeSongs(mal);
+      const unique = dedupeSongs(mal as any);
 
       // Normalize images for all songs
       const normalized = unique.map(s => ({
@@ -357,7 +360,7 @@ const HomeView: React.FC = () => {
       }));
 
       // Filter out short songs
-      const fullLengthSongs = normalized.filter(s => {
+      const fullLengthSongs = normalized.filter((s: any) => {
         const duration = Number(s.duration) || 0;
         return duration >= 90;
       });
@@ -430,17 +433,20 @@ const HomeView: React.FC = () => {
   const fetchMalayalamSongsData = useCallback(async () => {
     setIsMalayalamLoading(true);
     try {
-      // OPTIMIZED: Fetch only trending Malayalam songs for faster loading
-      const trending = await jiosaavnApi.getTrendingSongs?.() ?? [];
+      const [trending, romance] = await Promise.all([
+        jiosaavnApi.getTrendingSongs?.() ?? [],
+        jiosaavnApi.getMalayalamRomanceSongs?.() ?? []
+      ]);
+      const combined = dedupeSongs([...trending, ...romance]);
 
       // Normalize images for all songs
-      const normalized = trending.map(s => ({
+      const normalized = combined.map(s => ({
         ...s,
         image: normalizeSongImage(s) || normalizeSongImageUtil(s) || (s as any).image || null
       }));
 
       // Filter for Malayalam language only and full-length songs
-      const malayalamOnly = normalized.filter(s => {
+      const malayalamOnly = normalized.filter((s: any) => {
         const isMalayalam = getLangCode(s.language) === 'ML';
         const duration = Number(s.duration) || 0;
         const isFullLength = duration >= 90;
@@ -474,14 +480,13 @@ const HomeView: React.FC = () => {
       // OPTIMIZED: Fetch only Tamil trending songs for faster loading
       const trending = await jiosaavnApi.getTamilTrendingSongs?.() ?? [];
 
-      // Normalize images for all songs
+      // Normalize images for all songs (keep image array intact)
       const normalized = trending.map(s => ({
         ...s,
-        image: normalizeSongImage(s) || normalizeSongImageUtil(s) || (s as any).image || null
       }));
 
       // Filter for Tamil language only and full-length songs
-      const tamilOnly = normalized.filter(s => {
+      const tamilOnly = normalized.filter((s: any) => {
         const isTamil = getLangCode(s.language) === 'TA';
         const duration = Number(s.duration) || 0;
         const isFullLength = duration >= 90;

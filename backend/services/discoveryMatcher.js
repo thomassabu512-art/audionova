@@ -417,6 +417,17 @@ async function matchDiscoveryCandidates(ytItems, options) {
     (m.song && m.song.playCount) || 0
   ), 1);
 
+  const backendOrigin = process.env.BACKEND_PUBLIC_URL || 'https://audionova-production-3ca3.up.railway.app';
+  const rewriteUrl = (arr) => {
+    if (!arr || !Array.isArray(arr)) return arr;
+    return arr.map(item => {
+      if (item.link && item.link.startsWith('/api/')) {
+        return { ...item, link: backendOrigin + item.link };
+      }
+      return item;
+    });
+  };
+
   const scoredMatched = diverseMatched.map(m => {
     const ytMeta = ytMetaByVideoId.get(m.videoId) || null;
 
@@ -437,8 +448,8 @@ async function matchDiscoveryCandidates(ytItems, options) {
       year:          m.song.year || '',
       releaseDate:   m.song.releaseDate || '',
       album:         m.song.album || { id: '', name: '', url: '' },
-      image:         m.song.image || [],
-      downloadUrl:   m.song.downloadUrl || [],
+      image:         rewriteUrl(m.song.image) || [],
+      downloadUrl:   rewriteUrl(m.song.downloadUrl) || [],
       playCount:     m.song.playCount || 0,
       duration:      m.song.duration || 0,
       hasLyrics:     m.song.hasLyrics || false,

@@ -262,6 +262,24 @@ router.get('/', async (req, res) => {
   });
 });
 
+// Helper: fetch with retry on 429 (rate limit)
+async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 1500) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await axios.get(url, { timeout: 10000, ...options });
+      return response;
+    } catch (err) {
+      const status = err.response && err.response.status;
+      if (status === 429 && attempt < retries) {
+        console.warn(`[Lyrics] Rate limited (429), retrying in ${delayMs}ms... (attempt ${attempt}/${retries})`);
+        await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 // POST /api/lyrics/translate - Process lyric lines for Singing (Malayalam/Manglish Transliteration) or Meaning
 router.post('/translate', async (req, res) => {
   try {
@@ -271,65 +289,115 @@ router.post('/translate', async (req, res) => {
       return res.status(400).json({ error: 'Missing or empty lines array' });
     }
 
-    const fullText = lines.join('\n');
-
-    // MODE 1: Meaning Translation (Semantic translation in Malayalam, English, Hindi, etc.)
-    if (mode === 'meaning') {
-      const translateUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(fullText)}`;
-      const response = await axios.get(translateUrl, { timeout: 8000 });
-
-      if (response.data && Array.isArray(response.data[0])) {
-        const translatedFullText = response.data[0]
-          .map(chunk => (chunk && chunk[0]) ? chunk[0] : '')
-          .join('');
-
-        const translatedLines = translatedFullText.split('\n');
-        const resultLines = lines.map((originalLine, idx) => {
-          return (translatedLines[idx] && translatedLines[idx].trim())
-            ? translatedLines[idx].trim()
-            : originalLine;
-        });
-
-        return res.json({ success: true, translatedLines: resultLines, mode, targetLang });
-      }
+    // Process in smaller batches to avoid rate limiting (max 30 lines per request)
+    const BATCH_SIZE = 30;
+    const batches = [];
+    for (let i = 0; i < lines.length; i += BATCH_SIZE) {
+      batches.push(lines.slice(i, i + BATCH_SIZE));
     }
 
-    // MODE 2: English/Manglish Pronunciation (Sing in English Script)
-    if (mode === 'sing_en') {
-      const romanUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=rm&dt=t&q=${encodeURIComponent(fullText)}`;
-      const response = await axios.get(romanUrl, { timeout: 8000 });
+    let allResultLines = [];
 
-      let romanizedFullText = '';
-      if (response.data && Array.isArray(response.data[0])) {
-        // Find chunks that explicitly provide romanization (index 3)
-        const romanChunks = response.data[0].filter(chunk => chunk && chunk[3]);
-        if (romanChunks.length > 0) {
-          romanizedFullText = romanChunks.map(chunk => chunk[3]).join('');
+    for (const batch of batches) {
+      const fullText = batch.join('\n');
+
+      // MODE 1: Meaning Translation
+      if (mode === 'meaning') {
+        const translateUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(fullText)}`;
+        const response = await fetchWithRetry(translateUrl);
+
+        if (response && response.data && Array.isArray(response.data[0])) {
+          const translatedFullText = response.data[0]
+            .map(chunk => (chunk && chunk[0]) ? chunk[0] : '')
+            .join('');
+
+          const translatedLines = translatedFullText.split('\n');
+          const resultLines = batch.map((originalLine, idx) => {
+            return (translatedLines[idx] && translatedLines[idx].trim())
+              ? translatedLines[idx].trim()
+              : originalLine;
+          });
+          allResultLines = allResultLines.concat(resultLines);
+        } else {
+          allResultLines = allResultLines.concat(batch);
         }
       }
 
-      // If no romanization was returned (e.g. text is already in English letters), use original text.
-      // We NEVER fallback to chunk[0] because chunk[0] is semantic translation!
-      if (!romanizedFullText || !romanizedFullText.trim()) {
-        romanizedFullText = fullText;
+      // MODE 2: English/Manglish Romanization
+      else if (mode === 'sing_en') {
+        const romanUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=rm&dt=t&q=${encodeURIComponent(fullText)}`;
+        const response = await fetchWithRetry(romanUrl);
+
+        let romanizedFullText = '';
+        if (response && response.data && Array.isArray(response.data[0])) {
+          const romanChunks = response.data[0].filter(chunk => chunk && chunk[3]);
+          if (romanChunks.length > 0) {
+            romanizedFullText = romanChunks.map(chunk => chunk[3]).join('');
+          }
+        }
+
+        if (!romanizedFullText || !romanizedFullText.trim()) {
+          romanizedFullText = fullText;
+        }
+
+        const romanizedLines = romanizedFullText.split('\n');
+        const resultLines = batch.map((originalLine, idx) => {
+          return (romanizedLines[idx] && romanizedLines[idx].trim())
+            ? romanizedLines[idx].trim()
+            : originalLine;
+        });
+        allResultLines = allResultLines.concat(resultLines);
       }
 
-      if (!romanizedFullText) romanizedFullText = fullText;
+      // MODE 3: Malayalam Script Sing Mode
+      else if (mode === 'sing_ml') {
+        const romanUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ml&dt=rm&dt=t&q=${encodeURIComponent(fullText)}`;
+        const response = await fetchWithRetry(romanUrl);
 
-      const romanizedLines = romanizedFullText.split('\n');
-      const resultLines = lines.map((originalLine, idx) => {
-        return (romanizedLines[idx] && romanizedLines[idx].trim())
-          ? romanizedLines[idx].trim()
-          : originalLine;
-      });
+        let romanizedFullText = '';
+        if (response && response.data && Array.isArray(response.data[0])) {
+          const romanChunks = response.data[0].filter(chunk => chunk && chunk[3]);
+          if (romanChunks.length > 0) {
+            romanizedFullText = romanChunks.map(chunk => chunk[3]).join('');
+          }
+          if (!romanizedFullText) {
+            romanizedFullText = response.data[0]
+              .map(chunk => (chunk && chunk[0]) ? chunk[0] : '')
+              .join('');
+          }
+        }
 
-      return res.json({ success: true, translatedLines: resultLines, mode, targetLang });
+        if (!romanizedFullText || !romanizedFullText.trim()) {
+          romanizedFullText = fullText;
+        }
+
+        const romanizedLines = romanizedFullText.split('\n');
+        const resultLines = batch.map((originalLine, idx) => {
+          return (romanizedLines[idx] && romanizedLines[idx].trim())
+            ? romanizedLines[idx].trim()
+            : originalLine;
+        });
+        allResultLines = allResultLines.concat(resultLines);
+      }
+
+      else {
+        allResultLines = allResultLines.concat(batch);
+      }
+
+      // Small delay between batches to avoid rate limiting
+      if (batches.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
     }
 
-
+    return res.json({ success: true, translatedLines: allResultLines, mode, targetLang });
 
   } catch (err) {
     console.error('[Lyrics Translate] Error:', err.message);
+    // On rate limit, return 429 so frontend can handle gracefully
+    if (err.response && err.response.status === 429) {
+      return res.status(429).json({ error: 'Rate limited, please try again in a moment' });
+    }
     return res.status(500).json({ error: 'Failed to process lyrics', details: err.message });
   }
 });

@@ -111,12 +111,17 @@ export async function translateLyricsBatch(
   }
 
   try {
-    // 1. Try backend API endpoint first
+    // 1. Try backend API endpoint first (with timeout)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    
     const response = await fetch(`${API_BASE_URL}/lyrics/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lines, mode, targetLang: targetLanguage }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (response.ok) {
       const data = await response.json();
@@ -125,6 +130,10 @@ export async function translateLyricsBatch(
         return data.translatedLines;
       }
     }
+    // On 429 rate limit from backend, wait and try client fallback
+    if (response.status === 429) {
+      console.warn('[Lyrics] Backend rate limited (429), using client fallback');
+    }
   } catch (backendError) {
     console.warn('[Lyrics] Backend translation failed, trying client fallback:', backendError);
   }
@@ -132,18 +141,31 @@ export async function translateLyricsBatch(
   // 2. Client-side fallback using free Google GTX translate API directly
   try {
     const fullText = lines.join('\n');
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLanguage)}&dt=t&q=${encodeURIComponent(fullText)}`;
+    // For sing modes (Manglish/Romanized), use romanization (dt=rm), not translation (dt=t)
+    const isSingMode = mode === 'sing_en' || mode === 'sing_ml';
+    const dtParam = isSingMode ? 'rm' : 't';
+    const tlParam = isSingMode ? 'en' : encodeURIComponent(targetLanguage);
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${tlParam}&dt=${dtParam}&q=${encodeURIComponent(fullText)}`;
 
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
       if (data && Array.isArray(data[0])) {
-        const translatedFullText = data[0]
-          .map((chunk: any) => (chunk && chunk[0]) ? chunk[0] : '')
-          .join('');
-        const translatedLines = translatedFullText.split('\n').map((l: string, i: number) => l.trim() || lines[i]);
-        translationCache.set(cacheKey, translatedLines);
-        return translatedLines;
+        let resultText = '';
+        if (isSingMode) {
+          // Romanized/transliterated text is in data[0][i][3]
+          resultText = data[0]
+            .map((chunk: any) => (chunk && chunk[3]) ? chunk[3] : (chunk && chunk[0]) ? chunk[0] : '')
+            .join('');
+        } else {
+          // Translation text is in data[0][i][0]
+          resultText = data[0]
+            .map((chunk: any) => (chunk && chunk[0]) ? chunk[0] : '')
+            .join('');
+        }
+        const resultLines = resultText.split('\n').map((l: string, i: number) => l.trim() || lines[i]);
+        translationCache.set(cacheKey, resultLines);
+        return resultLines;
       }
     }
   } catch (clientError) {
